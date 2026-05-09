@@ -1,0 +1,53 @@
+#!/usr/bin/env bash
+
+G='\033[1;32m'
+B='\033[1;34m'
+R='\033[1;31m'
+Y='\033[1;33m'
+NC='\033[0m'
+
+# pacman-contrib dep
+if ! command -v paccache &> /dev/null; then
+    echo -e "${R}Ошибка:${NC} paccache не найден (требуется pacman-contrib)."
+    exit 1
+fi
+
+# orphans (-Qdtq)
+mapfile -t orphans < <(pacman -Qdtq)
+
+o_freed="0 MiB"
+if [[ ${#orphans[@]} -gt 0 ]]; then
+    # LANG=C for awk parsing
+    out=$(LANG=C sudo pacman -Rns "${orphans[@]}" --noconfirm 2>/dev/null)
+    freed=$(echo "$out" | awk -F': ' '/Total Removed Size/ {print $2}' | xargs)
+    [[ -n "$freed" ]] && o_freed="$freed"
+fi
+
+# cache (-rk2)
+c_out=$(LANG=C sudo paccache -rk2)
+
+if echo "$c_out" | grep -q "no candidate"; then
+    c_freed="0 MiB"
+    c_removed="0"
+else
+    c_removed=$(echo "$c_out" | awk '/finished:/ {print $4}')
+    c_freed=$(echo "$c_out" | awk -F'saved: ' '/disk space saved:/ {print $2}' | tr -d ')')
+fi
+
+# stdout
+echo -e "\n${G}=== Отчет ===${NC}"
+if [[ ${#orphans[@]} -gt 0 ]]; then
+    echo -e "${B}Сироты (${#orphans[@]}):${NC}"
+    echo "${orphans[@]}" | tr ' ' '\n' | column -t | sed 's/^/ - /'
+    echo -e "Освобождено: ${Y}$o_freed${NC}"
+else
+    echo -e "Сироты: ${Y}0${NC}"
+fi
+
+echo -e "\n${B}Кэш:${NC}"
+if [[ "$c_removed" == "0" ]]; then
+    echo -e "Уже очищен."
+else
+    echo -e "Удалено пакетов: ${Y}$c_removed${NC}"
+    echo -e "Освобождено: ${Y}$c_freed${NC}"
+fi
